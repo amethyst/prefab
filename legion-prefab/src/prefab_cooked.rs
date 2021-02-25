@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use legion::serialize::Canon;
 
 pub struct CookedPrefab {
     pub world: legion::world::World,
@@ -16,8 +17,8 @@ impl Serialize for CookedPrefab {
         &self,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
+        where
+            S: Serializer,
     {
         use serde::ser::SerializeStruct;
         use std::iter::FromIterator;
@@ -36,9 +37,11 @@ impl Serialize for CookedPrefab {
             entity_map: RefCell::new(&mut entity_map),
         };
 
+        let entity_serializer = Canon::default();
+
         let serializable_world = self
             .world
-            .as_serializable(legion::query::any(), &custom_serializer);
+            .as_serializable(legion::query::any(), &custom_serializer, &entity_serializer);
         let mut struct_ser = serializer.serialize_struct("CookedPrefab", 2)?;
         struct_ser.serialize_field("entities", &self.entities)?;
         struct_ser.serialize_field("world", &serializable_world)?;
@@ -52,10 +55,11 @@ enum CookedPrefabField {
     Entities,
     World,
 }
+
 impl<'de> Deserialize<'de> for CookedPrefab {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
+        where
+            D: Deserializer<'de>,
     {
         struct PrefabDeserVisitor;
         impl<'de> serde::de::Visitor<'de> for PrefabDeserVisitor {
@@ -71,8 +75,8 @@ impl<'de> Deserialize<'de> for CookedPrefab {
                 self,
                 mut seq: V,
             ) -> Result<Self::Value, V::Error>
-            where
-                V: serde::de::SeqAccess<'de>,
+                where
+                    V: serde::de::SeqAccess<'de>,
             {
                 let entities: HashMap<EntityUuid, legion::Entity> =
                     seq.next_element()?.expect("expected entities");
@@ -87,8 +91,8 @@ impl<'de> Deserialize<'de> for CookedPrefab {
                 self,
                 mut map: V,
             ) -> Result<Self::Value, V::Error>
-            where
-                V: serde::de::MapAccess<'de>,
+                where
+                    V: serde::de::MapAccess<'de>,
             {
                 let mut entities: Option<HashMap<EntityUuid, legion::Entity>> = None;
                 while let Some(key) = map.next_key()? {
@@ -113,11 +117,13 @@ impl<'de> Deserialize<'de> for CookedPrefab {
         deserializer.deserialize_struct("Prefab", FIELDS, PrefabDeserVisitor)
     }
 }
+
 struct WorldDeser(legion::world::World, HashMap<EntityUuid, legion::Entity>);
+
 impl<'de> Deserialize<'de> for WorldDeser {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
+        where
+            D: Deserializer<'de>,
     {
         use std::iter::FromIterator;
 
@@ -139,7 +145,12 @@ impl<'de> Deserialize<'de> for WorldDeser {
             allocator: RefCell::new(legion::world::Allocate::new()),
         };
 
-        let seed = legion::serialize::DeserializeNewWorld(&custom_deserializer);
+        let entity_serializer = Canon::default();
+
+        let seed = legion::serialize::DeserializeNewWorld {
+            world_deserializer: &custom_deserializer,
+            entity_serializer: &entity_serializer
+        };
 
         use serde::de::DeserializeSeed;
         let world: World = seed.deserialize(deserializer).unwrap();

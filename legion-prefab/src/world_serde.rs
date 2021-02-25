@@ -1,12 +1,12 @@
 use crate::format::EntityUuid;
 use crate::registration::ComponentRegistration;
-use legion::serialize::{EntitySerializer, UnknownType};
+use legion::serialize::{UnknownType, CustomEntitySerializer};
 use legion::storage::{ArchetypeIndex, UnknownComponentStorage, UnknownComponentWriter};
 use legion::{
     storage::{ComponentTypeId, EntityLayout},
     *,
 };
-use serde::{Deserialize, Deserializer, Serializer};
+use serde::{Deserializer, Serializer};
 use std::{cell::RefCell, collections::HashMap};
 
 pub struct CustomSerializer<'a> {
@@ -14,23 +14,19 @@ pub struct CustomSerializer<'a> {
     pub entity_map: RefCell<&'a mut HashMap<legion::Entity, EntityUuid>>,
 }
 
-impl<'a> legion::serialize::EntitySerializer for CustomSerializer<'a> {
-    fn serialize(
-        &self,
-        entity: Entity,
-        serialize_fn: &mut dyn FnMut(&dyn erased_serde::Serialize),
-    ) {
-        let mut entity_map = self.entity_map.borrow_mut();
+impl<'a> CustomEntitySerializer for CustomSerializer<'a>{
+    type SerializedID = EntityUuid;
 
-        let uuid = entity_map
+    fn to_serialized(&self, entity: Entity) -> Self::SerializedID {
+        let id = self.entity_map
+            .borrow_mut()
             .entry(entity)
-            .or_insert_with(|| *uuid::Uuid::new_v4().as_bytes());
-        serialize_fn(&uuid::Uuid::from_bytes(*uuid));
+            .or_insert_with(|| *uuid::Uuid::new_v4().as_bytes())
+            .clone();
+        id
     }
-    fn deserialize(
-        &self,
-        _deserializer: &mut dyn erased_serde::Deserializer,
-    ) -> Result<Entity, erased_serde::Error> {
+
+    fn from_serialized(&self, _serialized: Self::SerializedID) -> Entity {
         panic!("CustomSerializer can only be used to serialize")
     }
 }
@@ -103,13 +99,6 @@ impl<'a> legion::serialize::WorldSerializer for CustomSerializer<'a> {
             );
         }
     }
-
-    fn with_entity_serializer(
-        &self,
-        callback: &mut dyn FnMut(&dyn EntitySerializer),
-    ) {
-        callback(self)
-    }
 }
 
 pub struct CustomDeserializer<'a> {
@@ -119,24 +108,19 @@ pub struct CustomDeserializer<'a> {
     pub allocator: RefCell<legion::world::Allocate>,
 }
 
-impl<'a> legion::serialize::EntitySerializer for CustomDeserializer<'a> {
-    fn serialize(
-        &self,
-        _entity: Entity,
-        _serialize_fn: &mut dyn FnMut(&dyn erased_serde::Serialize),
-    ) {
+impl<'a> CustomEntitySerializer for CustomDeserializer<'a>{
+    type SerializedID = EntityUuid;
+
+    fn to_serialized(&self, _entity: Entity) -> Self::SerializedID {
         panic!("Cannot serialize with CustomDeserializer")
     }
-    fn deserialize(
-        &self,
-        deserializer: &mut dyn erased_serde::Deserializer,
-    ) -> Result<Entity, erased_serde::Error> {
-        let entity_uuid = <uuid::Uuid as Deserialize>::deserialize(deserializer)?;
+
+    fn from_serialized(&self, serialized: Self::SerializedID) -> Entity {
         let mut entity_map = self.entity_map.borrow_mut();
         let entity = entity_map
-            .entry(*entity_uuid.as_bytes())
+            .entry(serialized)
             .or_insert_with(|| self.allocator.borrow_mut().next().unwrap());
-        Ok(*entity)
+        *entity
     }
 }
 
@@ -203,12 +187,5 @@ impl<'r> legion::serialize::WorldDeserializer for CustomDeserializer<'r> {
                 type_id
             );
         }
-    }
-
-    fn with_entity_serializer(
-        &self,
-        callback: &mut dyn FnMut(&dyn EntitySerializer),
-    ) {
-        callback(self)
     }
 }
