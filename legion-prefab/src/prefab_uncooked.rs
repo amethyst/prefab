@@ -11,6 +11,7 @@ use std::{
     cell::{RefCell, RefMut},
     collections::HashMap,
 };
+use legion::serialize::Canon;
 
 /// The data we override on a component of an entity in another prefab that we reference
 #[derive(Serialize, Deserialize)]
@@ -268,9 +269,11 @@ impl Serialize for Prefab {
             entity_map: RefCell::new(&mut entity_map),
         };
 
+        let entity_serializer = Canon::default();
+
         let serializable_world = self
             .world
-            .as_serializable(legion::query::any(), &custom_serializer);
+            .as_serializable(legion::query::any(), &custom_serializer, &entity_serializer );
         let mut struct_ser = serializer.serialize_struct("Prefab", 2)?;
         struct_ser.serialize_field("prefab_meta", &self.prefab_meta)?;
         struct_ser.serialize_field("world", &serializable_world)?;
@@ -374,7 +377,14 @@ impl<'de> Deserialize<'de> for WorldDeser {
             allocator: RefCell::new(legion::world::Allocate::new()),
         };
 
-        let seed = legion::serialize::DeserializeNewWorld(&custom_deserializer);
+        let entity_serializer = Canon::default();
+
+        let seed = legion::serialize::DeserializeNewWorld
+        {
+            world_deserializer: &custom_deserializer,
+            entity_serializer: &entity_serializer
+        };
+
         let world: World = seed.deserialize(deserializer).unwrap();
 
         Ok(WorldDeser(world, entity_map))
